@@ -38,14 +38,43 @@ echo "------------------------------------------------------------"
 # Write CSV header
 echo "extension_name,file_path,matched_line" > "$REPORT_FILE"
 
+# ----- Pre-Scan: List all installed extensions -----
+echo
+echo "Installed VS Code extensions detected:"
+mapfile -t EXT_NAMES < <(ls -1 "$EXTENSIONS_DIR")
+if [ "${#EXT_NAMES[@]}" -eq 0 ]; then
+    echo "  (none found)"
+else
+    for ext in "${EXT_NAMES[@]}"; do
+        echo "  - $ext"
+    done
+fi
+echo "------------------------------------------------------------"
+
+# Ask user if they want detailed per-package messages
+echo
+read -rp "Do you want to print each 'Checking for extension reference'? (y/n) " SHOW_CHECKS
+SHOW_CHECKS=$(echo "$SHOW_CHECKS" | tr '[:upper:]' '[:lower:]')  
+
+
+
 # Track affected extensions
 declare -a AFFECTED_EXTS=()
 total_checked=0
 
+if [ "$SHOW_CHECKS" != "y" ]; then
+  echo
+  echo "Scanning installed extensions... and matching against known compromised packages... please wait"
+  echo "------------------------------------------------------------"
+fi
+
 # Loop through compromised packages list
 while IFS= read -r entry; do
   [ -z "$entry" ] && continue   
-  echo "🔍 Checking for extension reference: $entry"
+
+  if [ "$SHOW_CHECKS" = "y" ]; then
+      echo "🔍 Checking for extension reference: $entry"
+  fi
   ((total_checked++))
 
   for extpath in "$EXTENSIONS_DIR"/*; do
