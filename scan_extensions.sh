@@ -53,7 +53,7 @@ echo "------------------------------------------------------------"
 
 # Ask user if they want detailed per-package messages
 echo
-read -rp "Do you want to print each 'Checking for extension reference'? (y/n) " SHOW_CHECKS
+read -rp "Do you want to print out info for each known compromised package? (y/n) " SHOW_CHECKS
 SHOW_CHECKS=$(echo "$SHOW_CHECKS" | tr '[:upper:]' '[:lower:]')  
 
 
