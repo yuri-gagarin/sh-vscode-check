@@ -1,33 +1,27 @@
 #!/bin/env bash
 
-# This tool will scan VSCode extensions for possible compromised npm package vversions
-# Will output results to console and create a CSV file in the same folder
-
+# Scan VSCode extensions for compromised npm packages
+# Outputs to console and CSV
 set -u
 
-# === DIRECTORIES CONFIG ===
+# === CONFIG ===
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-COMPROMISED_LIST="$SCRIPT_DIR/compromised.txt"
+COMPROMISED_LIST="$SCRIPT_DIR/fake.txt"
 REPORT_FILE="$SCRIPT_DIR/vscode_scan_report.csv"
 
-# Set EXTENSIONS_DIR for compatibility on Mac/Linux/WSL2
+# Resolve VSCode extensions folder
 if [ -d "$HOME/.vscode/extensions/" ]; then
-	EXTENSIONS_DIR="$HOME/.vscode/extensions"
+  EXTENSIONS_DIR="$HOME/.vscode/extensions"
 elif [ -d "$HOME/.vscode-server/extensions" ]; then
-	EXTENSIONS_DIR="$HOME/.vscode-server/extensions"
+  EXTENSIONS_DIR="$HOME/.vscode-server/extensions"
 else 
-	echo "ERROR: Could not resolve VSCODE extensions folder."
-	exit 3
+  echo "ERROR: Could not resolve VSCode extensions folder."
+  exit 1
 fi
 
 if [ ! -f "$COMPROMISED_LIST" ]; then
-	echo "ERROR: List of compromised packages not fount at: $COMPROMISED_LIST"
-	exit 2
-fi	
-
-if [ ! -d "$EXTENSIONS_DIR" ]; then
-	echo "ERROR: VSCODE extensions folder not found at: $EXTENSIONS_DIR"
-	exit 3
+  echo "ERROR: Compromised list not found at $COMPROMISED_LIST"
+  exit 1
 fi
 
 echo "Using compromised list: $COMPROMISED_LIST"
@@ -35,77 +29,88 @@ echo "Scanning extensions in: $EXTENSIONS_DIR"
 echo "Report will be saved to: $REPORT_FILE"
 echo "------------------------------------------------------------"
 
-# Write CSV header
+# CSV header
 echo "extension_name,file_path,matched_line" > "$REPORT_FILE"
 
-# ----- Pre-Scan: List all installed extensions -----
+# List installed extensions
 echo
 echo "Installed VS Code extensions detected:"
-mapfile -t EXT_NAMES < <(ls -1 "$EXTENSIONS_DIR")
+mapfile -t EXT_NAMES < <(ls -1d "$EXTENSIONS_DIR"/*/ 2>/dev/null)
 if [ "${#EXT_NAMES[@]}" -eq 0 ]; then
-    echo "  (none found)"
+  echo "  (none found)"
 else
-    for ext in "${EXT_NAMES[@]}"; do
-        echo "  - $ext"
-    done
+  for ext in "${EXT_NAMES[@]}"; do
+    echo "  - $(basename "$ext")"
+  done
 fi
 echo "------------------------------------------------------------"
 
-# Ask user if they want detailed per-package messages
-echo
-read -rp "Do you want to print out info for each known compromised package? (y/n) " SHOW_CHECKS
-SHOW_CHECKS=$(echo "$SHOW_CHECKS" | tr '[:upper:]' '[:lower:]')  
 
-
-
-# Track affected extensions
 declare -a AFFECTED_EXTS=()
 total_checked=0
 
+# Ask user if they want detailed per-package messages
+echo
+read -rp "Do you want a detailed printout (y/n)? " SHOW_CHECKS
+SHOW_CHECKS=$(echo "$SHOW_CHECKS" | tr '[:upper:]' '[:lower:]')  
+
 if [ "$SHOW_CHECKS" != "y" ]; then
   echo
-  echo "Scanning installed extensions... and matching against known compromised packages... please wait"
+  echo "Working..."
   echo "------------------------------------------------------------"
 fi
 
-# Loop through compromised packages list
+# --- Scan ---
 while IFS= read -r entry; do
-  [ -z "$entry" ] && continue   
+  [ -z "$entry" ] && continue
 
-  if [ "$SHOW_CHECKS" = "y" ]; then
-      echo "🔍 Checking for extension reference: $entry"
+  # Split name and version at the **last** @
+  pkg_name="${entry%@*}"
+  pkg_version="${entry##*@}"
+
+  if [ -z "$pkg_name" ] || [ -z "$pkg_version" ]; then
+    echo "Skipping invalid entry in compromised list: $entry"
+    continue
   fi
+
   ((total_checked++))
 
+  # [ "$SHOW_CHECKS" = "y" ] && echo "🔍 Checking extensions for package: $entry"
+
+  # Check each extension folder
   for extpath in "$EXTENSIONS_DIR"/*; do
     [ -d "$extpath" ] || continue
     extname="$(basename "$extpath")"
 
-    matches=""
-    if [ -f "$extpath/package.json" ] || [ -f "$extpath/package-lock.json" ]; then
-      matches=$(grep -R -n -F "$entry" \
-        "$extpath/package.json" "$extpath/package-lock.json" 2>/dev/null || true)
+    # DEBUG LINE --- don't need at the moment
+    # echo "🔍 Checking package for '$pkg_name' version '$pkg_version' in extension '$extname'"
+
+    # Only print detailed info if SHOW_CHECKS=y
+    if [ "$SHOW_CHECKS" = "y" ]; then
+      echo "🔍 Checking for '$pkg_name' version '$pkg_version' in extension '$extname'"
     fi
 
-    if [ -n "$matches" ]; then
-      echo "⚠️  Extension may be affected: $extname"
-      echo "$matches" | sed 's/^/    /'
-      AFFECTED_EXTS+=("$extname")
+    matches_found=0
+    for file in "$extpath/package.json" "$extpath/package-lock.json"; do
+      [ -f "$file" ] || continue
 
-      # Add each match to CSV
       while IFS= read -r line; do
-        filepath=$(echo "$line" | cut -d: -f1)
-        lineno=$(echo "$line" | cut -d: -f2)
-        matchtext=$(echo "$line" | cut -d: -f3-)
-        echo "\"$extname\",\"$filepath:$lineno\",\"$matchtext\"" >> "$REPORT_FILE"
-      done <<< "$matches"
-
-      echo "------------------------------------------------------------"
-    fi
+        # Match lines like:
+        # "fake-library": "^1.2.3"
+        # "@ctrl/shared-torrent": "~6.3.0"
+        if [[ $line =~ \"${pkg_name//\//\\/}\"[[:space:]]*:[[:space:]]*\"[~^@]*${pkg_version}\" ]]; then
+          [ $matches_found -eq 0 ] && echo "⚠️  Extension may be affected: $extname"
+          echo "    $line"
+          AFFECTED_EXTS+=("$extname")
+          echo "\"$extname\",\"$file\",\"$line\"" >> "$REPORT_FILE"
+          matches_found=$((matches_found+1))
+        fi
+      done < "$file"
+    done
   done
 done < "$COMPROMISED_LIST"
 
-# Summary
+# --- Summary ---
 echo
 if [ "${#AFFECTED_EXTS[@]}" -eq 0 ]; then
   echo "✅ No installed VS Code extensions matched entries in compromised-packages.txt"
@@ -121,4 +126,4 @@ fi
 
 echo
 echo "Scanned $total_checked known compromised package(s)"
-echo "CSV report saved to: $REPORT_FILE" 
+echo "CSV report saved to: $REPORT_FILE"
