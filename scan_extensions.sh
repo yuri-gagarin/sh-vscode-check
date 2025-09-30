@@ -6,7 +6,7 @@ set -u
 
 # === CONFIG ===
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-COMPROMISED_LIST="$SCRIPT_DIR/fake.txt"
+COMPROMISED_LIST="$SCRIPT_DIR/compromised.txt"
 REPORT_FILE="$SCRIPT_DIR/vscode_scan_report.csv"
 
 # Resolve VSCode extensions folder
